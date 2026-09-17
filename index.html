@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>منظومة إنترنت الأشياء والذكاء الاصطناعي — مخطط النظام</title>
+<style>
+  @font-face {
+    font-family: 'JBM';
+    src: local('JetBrains Mono');
+  }
+  html, body {
+    margin: 0; padding: 0; background: #0A2C1E; overflow: hidden;
+    font-family: 'JetBrains Mono', 'Space Mono', monospace;
+  }
+  #labelLayer {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; direction: rtl;
+  }
+  .arabic-label {
+    font-family: 'Segoe UI', 'Tahoma', 'Noto Naskh Arabic', sans-serif;
+  }
+  canvas { display: block; }
+  #hint {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: #8FBFA0; font-size: 11px; letter-spacing: 0.5px;
+    font-family: 'Segoe UI', sans-serif; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="hint">اضغط على أي وحدة لعرض تفاصيلها التقنية · Click any block for technical detail</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script>
+
+// ---------- Palette: PCB soldermask-green fiberglass board ----------
+const COL_BG        = '#0A2C1E';   // soldermask green (board field)
+const COL_BG_2      = '#0D3524';   // secondary board tone for subtle weave
+const COL_TRACE_IDLE= '#C8A24A';   // idle copper trace (matte, unpowered)
+const COL_TRACE_HOT = '#FFD75E';   // energized copper trace (bright gold)
+const COL_ALERT     = '#FF6B4A';   // alert / hot-signal copper (oxidized copper-orange)
+const COL_TEXT      = '#EAF6EE';   // silkscreen white
+const COL_TEXT_DIM  = '#8FBFA0';   // dimmer silkscreen (muted mint)
+const COL_BLOCK_FILL= '#062017';   // component body (dark board cut-out)
+const COL_BLOCK_EDGE= '#3C7A54';   // silkscreen outline, unpowered
+const COL_BLOCK_EDGE_ACTIVE = '#FFD75E'; // gold when active/hovered
+const COL_PAD       = '#D8B36A';   // solder pad / via ring
+const COL_BLUE_BLE  = '#6FD3C7';   // BLE/Wi-Fi trace tint (teal solder)
+
+let W, H;
+let t = 0;
+let particles = [];
+let alertPulse = 0;
+let alertActive = false;
+let alertTimer = 0;
+let selected = null;
+let hovered = null;
+let blocks = [];
+let links = [];
+
+// Detail copy per block (Arabic technical summaries, kept short)
+const DETAILS = {
+  wearable: {
+    title: 'وحدة الحساسات',
+    sub: 'Custom PCB · Sensor Node',
+    lines: [
+      'PCB مخصص متعدد الطبقات، بتصميم مصغّر لتركيب الوحدة في موقعها',
+      'حساسات: حسب نوع القياس المطلوب (بيئية / حركة / أخرى)',
+      'محرك اهتزاز (Haptic) أو مؤشر تنبيه محلي عند الحاجة',
+      'MCU منخفض الاستهلاك (ESP32-S3 أو نظير) لمعالجة أولية للإشارة'
+    ]
+  },
+  power: {
+    title: 'إدارة الطاقة والبطارية',
+    sub: 'Power & Battery Management',
+    lines: [
+      'دائرة شحن Li-Po آمنة مع حماية من الشحن الزائد والتفريغ العميق',
+      'منظم جهد (LDO / Buck) لتوزيع الطاقة على الحساسات والمعالج',
+      'قياس نسبة الشحن الحالية وإرسالها ضمن تيار البيانات',
+      'وضع سكون (Deep Sleep) لإطالة عمر البطارية بين القراءات'
+    ]
+  },
+  radio: {
+    title: 'بروتوكولات الاتصال',
+    sub: 'BLE / Wi-Fi → MQTT / WebSocket',
+    lines: [
+      'اتصال أولي عبر BLE أو Wi-Fi حسب مدى التغطية المطلوب',
+      'تشفير الحمولة قبل الإرسال (TLS على مستوى النقل)',
+      'بروتوكول MQTT لبث القراءات اللحظية بأقل تأخير',
+      'إعادة محاولة تلقائية عند انقطاع الشبكة دون فقد بيانات'
+    ]
+  },
+  gateway: {
+    title: 'البوابة المحلية',
+    sub: 'Raspberry Pi 5 / Jetson — Edge Gateway',
+    lines: [
+      'معالج محلي يعمل كنقطة تجميع لكل الأجهزة القريبة',
+      'يستقبل تيار الفيديو من الكاميرات وبيانات الحساسات معاً',
+      'يدير قائمة الأجهزة المتصلة وحالتها في الوقت الحقيقي',
+      'يمرر البيانات الخام والنتائج المعالجة للسيرفر المركزي'
+    ]
+  },
+  ai: {
+    title: 'نموذج الرؤية الحاسوبية',
+    sub: 'Edge AI — Computer Vision Inference',
+    lines: [
+      'نموذج كشف كائنات يعمل محلياً (بدون الحاجة للسحابة)',
+      'تحليل كل إطار فيديو للتعرف على كائنات أو سلوكيات محددة',
+      'عند تحقق الشرط: توليد إشارة تنبيه فورية (Event Trigger)',
+      'زمن استجابة منخفض لأن المعالجة تتم على الحافة (Edge) لا بعيداً'
+    ]
+  },
+  backend: {
+    title: 'السيرفر والخادم الخلفي',
+    sub: 'Backend — Ingest & Storage',
+    lines: [
+      'استقبال البيانات من كل البوابات عبر MQTT / WebSocket',
+      'تخزين القراءات التاريخية وربطها بمعرّف كل جهاز وموقعه',
+      'توزيع التنبيهات الحية لكل عملاء لوحة التحكم المتصلين',
+      'واجهة API لإدارة الأجهزة وسجل الأحداث'
+    ]
+  },
+  dashboard: {
+    title: 'لوحة التحكم',
+    sub: 'Real-time Web Dashboard',
+    lines: [
+      'عرض حي للبيانات القادمة من كل الأجهزة على خريطة الموقع',
+      'تنبيهات لحظية تظهر فور وقوع الحدث دون إعادة تحميل الصفحة',
+      'سجل قابل للفلترة حسب الجهاز أو نوع الحدث أو التاريخ',
+      'مؤشر حالة الاتصال والبطارية لكل جهاز في الشبكة'
+    ]
+  }
+};
+
+function setup() {
+  W = windowWidth; H = windowHeight;
+  const c = createCanvas(W, H);
+  textFont('monospace');
+  layoutBlocks();
+  buildLinks();
+  frameRate(60);
+}
+
+function windowResized() {
+  W = windowWidth; H = windowHeight;
+  resizeCanvas(W, H);
+  layoutBlocks();
+  buildLinks();
+  buildBoardSpeckle();
+}
+
+// ---------- Layout ----------
+function layoutBlocks() {
+  blocks = [];
+  const marginX = W * 0.06;
+  const usableW = W - marginX * 2;
+  const colW = usableW / 4;
+
+  const bw = min(colW * 0.78, 268);
+  const bh = 100;
+
+  // Column centers
+  const cx = [
+    marginX + colW * 0.5,
+    marginX + colW * 1.5,
+    marginX + colW * 2.5,
+    marginX + colW * 3.5
+  ];
+
+  const rowTop = H * 0.28;   // radio / AI row
+  const rowMid = H * 0.50;   // sensor / camera / gateway row — all three share power
+  const rowBot = H * 0.72;   // power row, directly beneath the powered row
+
+  // Row 1 (top): edge processing that sits between sources and gateway
+  blocks.push(mkBlock('radio', 'الاتصال اللاسلكي', 'BLE / Wi-Fi · MQTT', cx[1], rowTop, bw, bh));
+  blocks.push(mkBlock('ai',    'الرؤية الحاسوبية', 'Edge AI Inference', cx[2], rowTop, bw, bh));
+
+  // Row 2 (middle): sensor node, camera, and gateway — the three powered modules,
+  // all on one row so power can reach each with a short, unobstructed drop
+  blocks.push(mkBlock('wearable', 'وحدة الحساسات', 'Sensor Node', cx[0], rowMid, bw, bh));
+  blocks.push(mkBlock('camstub', 'كاميرات المراقبة', 'Camera Feeds', cx[1], rowMid, bw*0.9, bh*0.85));
+  blocks.push(mkBlock('gateway', 'البوابة المحلية', 'Edge Gateway (Pi5 / Jetson)', cx[2], rowMid, bw, bh*1.2));
+
+  // Col 4: backend / dashboard
+  blocks.push(mkBlock('backend',  'السيرفر الخلفي', 'Backend Server', cx[3], rowTop, bw, bh));
+  blocks.push(mkBlock('dashboard','لوحة التحكم', 'Web Dashboard', cx[3], rowMid, bw, bh));
+
+  // Row 3 (bottom): power module, centered under the three modules it feeds
+  blocks.push(mkBlock('power', 'إدارة الطاقة', 'Power & Battery', cx[1], rowBot, bw*0.9, bh*0.85));
+}
+
+function mkBlock(id, labelAr, labelEn, x, y, w, h, stub=false) {
+  return { id, labelAr, labelEn, x, y, w, h, stub, hoverT: 0 };
+}
+
+function getBlock(id){ return blocks.find(b => b.id === id); }
+
+function buildLinks() {
+  links = [
+    // Power distribution — only sensors, cameras, and the local gateway are powered by this module
+    { a: 'power', b: 'wearable', kind: 'power' },
+    { a: 'power', b: 'camstub',  kind: 'power' },
+    { a: 'power', b: 'gateway',  kind: 'power' },
+
+    // Sensor data path: sensor -> radio -> gateway
+    { a: 'wearable', b: 'radio',   kind: 'internal' },
+    { a: 'radio',    b: 'gateway', kind: 'wireless' },
+
+    // Vision path: camera -> AI model -> gateway
+    { a: 'camstub', b: 'ai',      kind: 'internal' },
+    { a: 'ai',      b: 'gateway', kind: 'internal' },
+
+    // All concentrated data leaves the gateway only
+    { a: 'gateway',  b: 'backend',   kind: 'network' },
+    { a: 'backend',  b: 'dashboard', kind: 'network' },
+  ];
+}
+
+// ---------- Draw ----------
+function draw() {
+  background(COL_BG);
+  drawGrid();
+  t += 1;
+
+  // spawn particles along links periodically
+  if (t % 26 === 0) {
+    links.forEach(l => spawnParticle(l));
+  }
+
+  // AI event trigger cycle: every ~7s, fire an alert
+  alertTimer++;
+  if (alertTimer > 430) {
+    alertTimer = 0;
+    alertActive = true;
+    alertPulse = 0;
+    spawnAlertBurst();
+  }
+  if (alertActive) {
+    alertPulse += 1;
+    if (alertPulse > 140) alertActive = false;
+  }
+
+  drawLinks();
+  drawParticles();
+  drawBlocks();
+  drawTitle();
+  drawDetailPanel();
+}
+
+// Precomputed fiberglass-weave speckle so it doesn't recompute noise every frame
+let boardSpeckle = null;
+function buildBoardSpeckle() {
+  boardSpeckle = [];
+  const cellsX = ceil(W / 22), cellsY = ceil(H / 22);
+  for (let i = 0; i < cellsX; i++) {
+    for (let j = 0; j < cellsY; j++) {
+      if (random() < 0.55) {
+        boardSpeckle.push({
+          x: i * 22 + random(22),
+          y: j * 22 + random(22),
+          s: random(0.4, 1.6),
+          tone: random() < 0.5 ? COL_BG_2 : '#0E3A28'
+        });
+      }
+    }
+  }
+}
+
+function drawGrid() {
+  // base soldermask fill with faint fiberglass weave lines
+  stroke(COL_BG_2);
+  strokeWeight(1);
+  const step = 26;
+  for (let x = 0; x < W; x += step) line(x, 0, x, H);
+  for (let y = 0; y < H; y += step) line(0, y, W, y);
+
+  // speckle texture (fiberglass weave / solder-rubber grain)
+  if (!boardSpeckle) buildBoardSpeckle();
+  noStroke();
+  boardSpeckle.forEach(p => {
+    fill(p.tone);
+    circle(p.x, p.y, p.s);
+  });
+
+  // a few faint mounting-hole vias scattered near corners for authenticity
+  noFill();
+  stroke('#144030');
+  strokeWeight(1.5);
+  const vias = [[34,34],[W-34,34],[34,H-34],[W-34,H-34]];
+  vias.forEach(v => {
+    circle(v[0], v[1], 14);
+    fill(COL_PAD); noStroke();
+    circle(v[0], v[1], 5);
+    noFill(); stroke('#144030');
+  });
+}
+
+function drawTitle() {
+  noStroke();
+  fill(COL_TEXT);
+  textAlign(RIGHT, TOP);
+  textSize(20);
+  textStyle(BOLD);
+  text('منظومة إنترنت الأشياء والذكاء الاصطناعي', W - 28, 24);
+  fill(COL_TEXT_DIM);
+  textSize(12);
+  textStyle(NORMAL);
+  textAlign(RIGHT, TOP);
+  text('End-to-End IoT & Edge AI System — Live Architecture Simulation', W - 28, 52);
+
+  // status readout, left side
+  textAlign(LEFT, TOP);
+  fill(alertActive ? COL_ALERT : COL_TRACE_HOT);
+  textSize(11);
+  const statusMsg = alertActive
+    ? '⚠ ALERT — object detected · Edge AI trigger fired'
+    : '● SYSTEM NOMINAL — telemetry on copper';
+  text(statusMsg, 28, 24);
+  fill(COL_TEXT_DIM);
+  text('t+' + nf(floor(t/60), 3) + 's', 28, 42);
+}
+
+// ---------- Links ----------
+function linkPath(l) {
+  const a = getBlock(l.a), b = getBlock(l.b);
+  return { a, b };
+}
+
+function drawLinks() {
+  links.forEach(l => {
+    const { a, b } = linkPath(l);
+    const hot = (selected && (selected===l.a || selected===l.b)) || (hovered && (hovered===l.a || hovered===l.b));
+    if (l.kind === 'power') {
+      strokeWeight(hot ? 1.8 : 1);
+      stroke(hot ? COL_ALERT : lerpColor(color(COL_BLOCK_EDGE), color(COL_ALERT), 0.3));
+      drawingContext.setLineDash([2,3]);
+      drawOrthoLine(a, b, true);
+      drawingContext.setLineDash([]);
+    } else if (l.kind === 'wireless') {
+      strokeWeight(hot ? 2 : 1.3);
+      stroke(hot ? COL_BLUE_BLE : lerpColor(color(COL_TRACE_IDLE), color(COL_BLUE_BLE), 0.35));
+      drawDashedCurve(a, b, 6);
+    } else {
+      strokeWeight(hot ? 2 : 1.3);
+      stroke(hot ? COL_TRACE_HOT : COL_TRACE_IDLE);
+      drawOrthoLine(a, b);
+    }
+  });
+}
+
+function drawOrthoLine(a, b, viaBottom=false) {
+  noFill();
+  beginShape();
+  if (viaBottom) {
+    // route as a shared power rail between the power module (below) and each
+    // target (above): rise from a's top edge, run along the rail, drop into
+    // b's bottom edge — never passing through either block.
+    const railY = (a.y - a.h/2 + (b.y + b.h/2)) / 2;
+    vertex(a.x, a.y - a.h/2);
+    vertex(a.x, railY);
+    vertex(b.x, railY);
+    vertex(b.x, b.y + b.h/2);
+    endShape();
+    return;
+  }
+  const midX = (a.x + a.w/2 < b.x - b.w/2) ? (a.x + b.x)/2 : a.x;
+  vertex(a.x + (a.x < b.x ? a.w/2 : -a.w/2), a.y);
+  if (abs(a.y - b.y) > 2) {
+    vertex(midX, a.y);
+    vertex(midX, b.y);
+  }
+  vertex(b.x - (a.x < b.x ? b.w/2 : -b.w/2), b.y);
+  endShape();
+}
+
+function drawDashedCurve(a, b, dashLen) {
+  const x1 = a.x + a.w/2, y1 = a.y;
+  const x2 = b.x - b.w/2, y2 = b.y;
+  const d = dist(x1,y1,x2,y2);
+  const steps = floor(d / dashLen);
+  noFill();
+  for (let i = 0; i < steps; i += 2) {
+    const t0 = i / steps, t1 = min((i+1)/steps, 1);
+    const xa = lerp(x1,x2,t0), ya = lerp(y1,y2,t0) + sin(t0*PI)*(-14);
+    const xb = lerp(x1,x2,t1), yb = lerp(y1,y2,t1) + sin(t1*PI)*(-14);
+    line(xa,ya,xb,yb);
+  }
+}
+
+function pointOnLink(l, tt) {
+  const { a, b } = linkPath(l);
+  if (l.kind === 'wireless') {
+    const x1 = a.x + a.w/2, y1 = a.y;
+    const x2 = b.x - b.w/2, y2 = b.y;
+    const x = lerp(x1,x2,tt), y = lerp(y1,y2,tt) + sin(tt*PI)*(-14);
+    return {x,y};
+  } else if (l.kind === 'power') {
+    const railY = (a.y - a.h/2 + (b.y + b.h/2)) / 2;
+    const x1 = a.x, y1 = a.y - a.h/2;
+    const x2 = b.x, y2 = b.y + b.h/2;
+    const segV1 = abs(railY - y1), segH = abs(x2 - x1), segV2 = abs(y2 - railY);
+    const total = segV1 + segH + segV2 || 1;
+    const d = tt*total;
+    if (d < segV1) return { x: x1, y: lerp(y1, railY, d/max(segV1,0.001)) };
+    if (d < segV1+segH) return { x: lerp(x1, x2, (d-segV1)/max(segH,0.001)), y: railY };
+    return { x: x2, y: lerp(railY, y2, (d-segV1-segH)/max(segV2,0.001)) };
+  } else {
+    const goingRight = a.x < b.x;
+    const x1 = a.x + (goingRight? a.w/2 : -a.w/2), y1 = a.y;
+    const x2 = b.x - (goingRight? b.w/2 : -b.w/2), y2 = b.y;
+    const midX = (x1+x2)/2;
+    // three-segment path length approximation via tt across horiz-vert-horiz
+    const segH = abs(midX - x1), segV = abs(y2 - y1), segH2 = abs(x2 - midX);
+    const total = segH + segV + segH2 || 1;
+    const d = tt*total;
+    if (d < segH) return { x: lerp(x1, midX, d/max(segH,0.001)), y: y1 };
+    if (d < segH+segV) return { x: midX, y: lerp(y1, y2, (d-segH)/max(segV,0.001)) };
+    return { x: lerp(midX, x2, (d-segH-segV)/max(segH2,0.001)), y: y2 };
+  }
+}
+
+// ---------- Particles ----------
+function spawnParticle(l) {
+  particles.push({ link: l, tt: 0, speed: 0.012 + random(0.004), alert:false });
+}
+function spawnAlertBurst() {
+  const camToAi   = links.find(l => l.a==='camstub' && l.b==='ai');
+  const aiToGw    = links.find(l => l.a==='ai' && l.b==='gateway');
+  const gwToBack  = links.find(l => l.a==='gateway' && l.b==='backend');
+  const backToDash= links.find(l => l.a==='backend' && l.b==='dashboard');
+  if (camToAi) particles.push({ link: camToAi, tt: 0, speed: 0.02, alert:true });
+  if (aiToGw) setTimeout(()=>particles.push({ link: aiToGw, tt: 0, speed: 0.02, alert:true }), 260);
+  if (gwToBack) setTimeout(()=>particles.push({ link: gwToBack, tt: 0, speed: 0.02, alert:true }), 520);
+  if (backToDash) setTimeout(()=>particles.push({ link: backToDash, tt: 0, speed: 0.02, alert:true }), 780);
+}
+
+function drawParticles() {
+  noStroke();
+  particles.forEach(p => {
+    p.tt += p.speed;
+    const pos = pointOnLink(p.link, constrain(p.tt,0,1));
+    const c = p.alert ? color(COL_ALERT) : color(COL_TRACE_HOT);
+    fill(red(c), green(c), blue(c), 230);
+    circle(pos.x, pos.y, p.alert ? 8 : 5);
+    fill(red(c), green(c), blue(c), 60);
+    circle(pos.x, pos.y, p.alert ? 16 : 10);
+  });
+  particles = particles.filter(p => p.tt < 1);
+}
+
+// ---------- Blocks ----------
+// Shrink text size until it fits within maxW (returns the size used)
+function fitTextSize(str, maxW, startSize, minSize) {
+  let s = startSize;
+  textStyle(BOLD);
+  while (s > minSize) {
+    textSize(s);
+    if (textWidth(str) <= maxW) break;
+    s -= 0.5;
+  }
+  return s;
+}
+
+function drawBlocks() {
+  blocks.forEach(b => {
+    const isHover = hovered === b.id;
+    const isSel = selected === b.id;
+    b.hoverT = lerp(b.hoverT, (isHover||isSel) ? 1 : 0, 0.18);
+
+    push();
+    translate(b.x, b.y);
+
+    // glow on hover/select (warm gold energize, like a powered trace)
+    if (b.hoverT > 0.02) {
+      noStroke();
+      fill(255, 215, 94, 26 * b.hoverT);
+      rectMode(CENTER);
+      rect(0, 0, b.w + 20*b.hoverT, b.h + 20*b.hoverT, 5);
+    }
+
+    rectMode(CENTER);
+    // component body: dark board cut-out with subtle inner panel
+    fill(COL_BLOCK_FILL);
+    const edgeCol = lerpColor(color(COL_BLOCK_EDGE), color(COL_BLOCK_EDGE_ACTIVE), b.hoverT);
+    stroke(edgeCol);
+    strokeWeight(1.6);
+    if (b.stub) drawingContext.setLineDash([5,4]);
+    rect(0, 0, b.w, b.h, 3);
+    drawingContext.setLineDash([]);
+
+    // inner silkscreen rule separating title/subtitle zone
+    stroke(edgeCol);
+    strokeWeight(0.8);
+    line(-b.w/2 + 14, -4, b.w/2 - 14, -4);
+
+    // corner solder pads (small filled squares) instead of plain ticks
+    noStroke();
+    fill(b.hoverT > 0.15 ? COL_PAD : COL_BLOCK_EDGE);
+    const pad = 5;
+    const px_ = b.w/2 - 10, py_ = b.h/2 - 10;
+    [[-px_,-py_],[px_,-py_],[-px_,py_],[px_,py_]].forEach(c => {
+      rect(c[0], c[1], pad, pad, 1);
+    });
+
+    // ---- Arabic label: auto-fit inside the block, own text stack ----
+    const innerW = b.w - 24;
+    const arSize = fitTextSize(b.labelAr, innerW, b.stub ? 13 : 15.5, 9);
+    noStroke();
+    fill(b.stub ? COL_TEXT_DIM : COL_TEXT);
+    textAlign(CENTER, CENTER);
+    textStyle(BOLD);
+    textSize(arSize);
+    text(b.labelAr, 0, -b.h/2 + (b.h*0.34));
+
+    // ---- English sub-label: auto-fit ----
+    const enSize = fitTextSizeNormal(b.labelEn, innerW, 10.5, 7.5);
+    fill(COL_TEXT_DIM);
+    textStyle(NORMAL);
+    textSize(enSize);
+    text(b.labelEn, 0, b.h/2 - (b.h*0.24));
+
+    pop();
+  });
+}
+
+function fitTextSizeNormal(str, maxW, startSize, minSize) {
+  let s = startSize;
+  textStyle(NORMAL);
+  while (s > minSize) {
+    textSize(s);
+    if (textWidth(str) <= maxW) break;
+    s -= 0.5;
+  }
+  return s;
+}
+
+// ---------- Detail panel ----------
+function drawDetailPanel() {
+  if (!selected) return;
+  const d = DETAILS[selected];
+  if (!d) return;
+
+  const pw = min(W * 0.34, 380);
+  const ph = 210;
+  const px = W - pw - 24;
+  const py = H - ph - 24;
+
+  push();
+  fill(9, 15, 11, 235);
+  stroke(COL_TRACE_HOT);
+  strokeWeight(1.2);
+  rect(px, py, pw, ph, 4);
+
+  noStroke();
+  fill(COL_TRACE_HOT);
+  textAlign(RIGHT, TOP);
+  textStyle(BOLD);
+  textSize(15);
+  text(d.title, px + pw - 18, py + 16);
+
+  fill(COL_TEXT_DIM);
+  textStyle(NORMAL);
+  textSize(10.5);
+  textAlign(RIGHT, TOP);
+  text(d.sub, px + pw - 18, py + 38);
+
+  stroke(COL_BLOCK_EDGE);
+  strokeWeight(1);
+  line(px+16, py+56, px+pw-16, py+56);
+
+  noStroke();
+  fill(COL_TEXT);
+  textSize(11.5);
+  textAlign(RIGHT, TOP);
+  let ly = py + 68;
+  d.lines.forEach(line_ => {
+    const wrapped = wrapText(line_, pw - 40, 11.5);
+    wrapped.forEach(wl => {
+      text('· ' + wl, px + pw - 18, ly);
+      ly += 17;
+    });
+    ly += 3;
+  });
+
+  fill(COL_TEXT_DIM);
+  textSize(9.5);
+  textAlign(RIGHT, BOTTOM);
+  text('اضغط في مكان آخر للإغلاق', px + pw - 18, py + ph - 10);
+  pop();
+}
+
+function wrapText(str, maxW, size) {
+  textSize(size);
+  const words = str.split(' ');
+  let lines_ = [];
+  let cur = '';
+  words.forEach(w => {
+    const test = cur ? cur + ' ' + w : w;
+    if (textWidth(test) > maxW && cur) {
+      lines_.push(cur);
+      cur = w;
+    } else {
+      cur = test;
+    }
+  });
+  if (cur) lines_.push(cur);
+  return lines_;
+}
+
+// ---------- Interaction ----------
+function mouseMoved() {
+  hovered = null;
+  for (const b of blocks) {
+    if (abs(mouseX - b.x) < b.w/2 && abs(mouseY - b.y) < b.h/2) {
+      hovered = b.id;
+      break;
+    }
+  }
+  cursor(hovered ? 'pointer' : 'default');
+}
+
+function mousePressed() {
+  let hit = null;
+  for (const b of blocks) {
+    if (abs(mouseX - b.x) < b.w/2 && abs(mouseY - b.y) < b.h/2) {
+      hit = b.id;
+      break;
+    }
+  }
+  if (hit && DETAILS[hit]) {
+    selected = (selected === hit) ? null : hit;
+  } else {
+    selected = null;
+  }
+}
+</script>
+</body>
+</html>
