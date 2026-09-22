@@ -6,6 +6,7 @@ processing, to the backend and dashboard.
 
 <img width="1346" height="582" alt="Peek 2026-09-17 13-20" src="https://github.com/user-attachments/assets/e5f59d21-81df-4d66-a0d1-1a87c3946c66" />
 
+https://muhammad-rabieh.github.io/_2026-09-17_IoT-edge-AI-system/
 
 **File:** `iot-edge-ai-system-diagram.html` — open directly in any browser.
 
